@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Online Chat</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,Arial,sans-serif;background:#0f172a;color:#e2e8f0;height:100vh;display:flex;flex-direction:column}
+  header{display:flex;align-items:center;gap:12px;padding:10px 14px;background:#1e293b;border-bottom:1px solid #334155}
+  #menuBtn{background:#334155;border:none;color:#fff;font-size:20px;border-radius:8px;padding:6px 12px;cursor:pointer}
+  header h1{font-size:18px}
+  #badge{margin-left:auto;font-size:12px;color:#fbbf24;display:none}
+  #panel{position:fixed;top:0;left:-240px;width:240px;height:100%;background:#1e293b;border-right:1px solid #334155;padding:60px 16px 16px;transition:left .25s;z-index:10}
+  #panel.open{left:0}
+  #panel button{width:100%;padding:12px;border:none;border-radius:8px;background:#475569;color:#fff;font-size:16px;cursor:pointer;margin-bottom:10px}
+  #panel button:hover{background:#64748b}
+  #overlay{position:fixed;inset:0;background:#0006;display:none;z-index:5}
+  #overlay.show{display:block}
+  #messages{flex:1;overflow-y:auto;padding:14px;display:flex;flex-direction:column;gap:8px}
+  .msg{background:#1e293b;border-radius:10px;padding:8px 12px;max-width:85%;word-wrap:break-word;align-self:flex-start}
+  .msg.me{background:#2563eb;align-self:flex-end}
+  .msg .n{font-size:12px;color:#93c5fd;font-weight:600}
+  .msg.me .n{color:#dbeafe}
+  .msg .t{font-size:10px;opacity:.6;margin-left:6px}
+  .msg .x{margin-left:8px;cursor:pointer;color:#f87171;font-size:14px}
+  form{display:flex;gap:8px;padding:10px;background:#1e293b;border-top:1px solid #334155}
+  #name{width:110px}
+  input{padding:10px;border-radius:8px;border:1px solid #475569;background:#0f172a;color:#fff;font-size:15px}
+  #text{flex:1;min-width:0}
+  form button{padding:10px 16px;border:none;border-radius:8px;background:#22c55e;color:#fff;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+
+<div id="overlay"></div>
+<div id="panel">
+  <button id="adminBtn">🔐 Admin</button>
+  <button id="logoutBtn" style="display:none">Chiqish</button>
+</div>
+
+<header>
+  <button id="menuBtn">☰</button>
+  <h1>💬 Online Chat</h1>
+  <span id="badge">ADMIN</span>
+</header>
+
+<div id="err" style="display:none;background:#7f1d1d;color:#fff;padding:10px 14px;font-size:14px;line-height:1.4"></div>
+<div id="messages"></div>
+
+<form id="form">
+  <input id="name" placeholder="Ismingiz" maxlength="20" required>
+  <input id="text" placeholder="Xabar yozing..." maxlength="500" autocomplete="off" required>
+  <button>Yuborish</button>
+</form>
+
+<script type="module">
+import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+import { getDatabase, ref, push, onValue, remove, serverTimestamp, query, limitToLast }
+  from "https://www.gstatic.com/firebasejs/10.12.2/firebase-database.js";
+
+// ====== SHU YERGA O'ZINGIZNING FIREBASE SOZLAMALARINGIZNI QO'YING ======
+const firebaseConfig = {
+  apiKey: "SIZNING_API_KEY",
+  authDomain: "SIZNING_PROYEKT.firebaseapp.com",
+  databaseURL: "https://SIZNING_PROYEKT-default-rtdb.firebaseio.com",
+  projectId: "SIZNING_PROYEKT",
+  appId: "SIZNING_APP_ID"
+};
+// =======================================================================
+
+const ADMIN_PASSWORD = "gold9999";
+
+const showErr = t => { const e = document.getElementById("err"); e.textContent = t; e.style.display = "block"; };
+if (firebaseConfig.apiKey.includes("SIZNING")) {
+  showErr("⚠️ Firebase sozlanmagan: index.html ichidagi firebaseConfig ga o'z ma'lumotlaringizni qo'ying.");
+}
+const app = initializeApp(firebaseConfig);
+const db = getDatabase(app);
+const chatRef = ref(db, "messages");
+
+const $ = id => document.getElementById(id);
+const messagesEl = $("messages");
+let isAdmin = sessionStorage.getItem("admin") === "1";
+let myId = localStorage.getItem("uid");
+if (!myId) { myId = Math.random().toString(36).slice(2); localStorage.setItem("uid", myId); }
+$("name").value = localStorage.getItem("name") || "";
+
+function updateAdminUI() {
+  $("badge").style.display = isAdmin ? "block" : "none";
+  $("adminBtn").style.display = isAdmin ? "none" : "block";
+  $("logoutBtn").style.display = isAdmin ? "block" : "none";
+}
+updateAdminUI();
+
+function togglePanel(open) {
+  $("panel").classList.toggle("open", open);
+  $("overlay").classList.toggle("show", open);
+}
+$("menuBtn").onclick = () => togglePanel(!$("panel").classList.contains("open"));
+$("overlay").onclick = () => togglePanel(false);
+
+$("adminBtn").onclick = () => {
+  const p = prompt("Parolni kiriting:");
+  if (p === null) return;
+  if (p === ADMIN_PASSWORD) {
+    isAdmin = true;
+    sessionStorage.setItem("admin", "1");
+    updateAdminUI(); render(lastData); togglePanel(false);
+  } else alert("Parol noto'g'ri!");
+};
+$("logoutBtn").onclick = () => {
+  isAdmin = false; sessionStorage.removeItem("admin");
+  updateAdminUI(); render(lastData); togglePanel(false);
+};
+
+$("form").onsubmit = e => {
+  e.preventDefault();
+  const name = $("name").value.trim();
+  const text = $("text").value.trim();
+  if (!name || !text) return;
+  localStorage.setItem("name", name);
+  push(chatRef, { uid: myId, name, text, time: Date.now() })
+    .catch(err => showErr("Xabar yuborilmadi: " + err.message + " (Firebase Rules ni tekshiring)"));
+  $("text").value = "";
+};
+
+let lastData = null;
+function render(data) {
+  messagesEl.innerHTML = "";
+  if (!data) return;
+  const nearBottom = true;
+  Object.entries(data).forEach(([key, m]) => {
+    const div = document.createElement("div");
+    div.className = "msg" + (m.uid === myId ? " me" : "");
+    const n = document.createElement("div");
+    n.className = "n";
+    n.textContent = m.name;
+    const t = document.createElement("span");
+    t.className = "t";
+    t.textContent = new Date(m.time).toLocaleTimeString([], {hour:"2-digit",minute:"2-digit"});
+    n.appendChild(t);
+    if (isAdmin) {
+      const x = document.createElement("span");
+      x.className = "x"; x.textContent = "🗑";
+      x.onclick = () => { if (confirm("Xabar o'chirilsinmi?")) remove(ref(db, "messages/" + key)); };
+      n.appendChild(x);
+    }
+    const body = document.createElement("div");
+    body.textContent = m.text;
+    div.append(n, body);
+    messagesEl.appendChild(div);
+  });
+  if (nearBottom) messagesEl.scrollTop = messagesEl.scrollHeight;
+}
+
+onValue(query(chatRef, limitToLast(200)), snap => {
+  lastData = snap.val();
+  render(lastData);
+}, err => showErr("Bazaga ulanib bo'lmadi: " + err.message));
+
+onValue(ref(db, ".info/connected"), s => {
+  if (s.val() === true) document.getElementById("err").style.display = "none";
+});
+</script>
+</body>
+</html>
